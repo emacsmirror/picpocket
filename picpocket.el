@@ -1,10 +1,10 @@
 ;;; picpocket.el --- Image viewer -*- lexical-binding: t; coding: utf-8-unix -*-
 
-;; Copyright (C) 2017-2020 Johan Claesson
+;; Copyright (C) 2017-2025 Johan Claesson
 ;; Author: Johan Claesson <johanwclaesson@gmail.com>
 ;; Maintainer: Johan Claesson <johanwclaesson@gmail.com>
 ;; URL: https://github.com/johanclaesson/picpocket
-;; Version: 43
+;; Version: 44
 ;; Keywords: multimedia
 ;; Package-Requires: ((emacs "25.1"))
 
@@ -177,13 +177,13 @@ the other actions it is the destination directory.
 Example:
 
  (defvar my-picpocket-alist
-   '((?1 tag \"bad\")
+   \\='((?1 tag \"bad\")
      (?2 tag \"sigh\")
      (?3 tag \"good\")
      (?4 tag \"great\")
      (?5 tag \"awesome\")))
 
- (setq picpocket-keystroke-alist 'my-picpocket-alist)
+ (setq picpocket-keystroke-alist \\='my-picpocket-alist)
 
 There exist a convenience command `picpocket-edit-keystrokes' that
 will jump to the definition that the variable
@@ -204,7 +204,7 @@ will jump to the definition that the variable
 
 This is only relevant if `picpocket-consider-dir-as-tag'
 is non-nil."
-  :type 'list)
+       :type '(string))
 
 (defface picpocket-dir-tags-face  '((((background light))
                                      (:foreground "blue" :slant italic))
@@ -348,13 +348,16 @@ This affects the commands `picpocket-scroll-some-*'."
   "If non-nil initialize the rotation with exif data when available."
   :type 'boolean)
 
+(defcustom picpocket-animate t
+  "If non-nil animate pictures when possible."
+  :type 'boolean)
 
 
 ;;; Variables
 
 ;; PENDING some of these would make sense to convert to defcustom
 
-(defconst picpocket-version 43)
+(defconst picpocket-version 44)
 (defconst picpocket-buffer "*picpocket*")
 (defconst picpocket-undo-buffer "*picpocket-undo*")
 (defconst picpocket-list-buffer "*picpocket-list*")
@@ -644,6 +647,20 @@ with `cl-multiple-value-bind' etc."
        (picpocket-clock-report ,title))))
 
 
+;;; Compatibility functions
+
+(defun picpocket-pos-bol (&optional n)
+  (if (fboundp 'pos-bol)
+      (funcall 'pos-bol n)
+    (line-beginning-position n)))
+
+(defun picpocket-pos-eol (&optional n)
+  (if (fboundp 'pos-eol)
+      (funcall 'pos-eol n)
+    (line-end-position n)))
+
+
+
 ;;; Picpocket mode
 
 (define-derived-mode picpocket-base-mode special-mode "picpocket-base"
@@ -726,6 +743,7 @@ This mode is not used directly.  Other modes inherit from this mode.
                       " [n - thumbnails]"
                       " [s - filter by substring]"
                       " [k - keep moved]"
+                      " [a - animate]"
                       " [D - debug]"))))
     (define-key map [?d] #'picpocket-toggle-destination-dir)
     (define-key map [?r] #'picpocket-toggle-recursive)
@@ -734,6 +752,7 @@ This mode is not used directly.  Other modes inherit from this mode.
     (define-key map [?n] #'picpocket-toggle-thumbnails)
     (define-key map [?s] #'picpocket-toggle-filter-by-substring)
     (define-key map [?k] #'picpocket-toggle-keep-moved-files)
+    (define-key map [?a] #'picpocket-toggle-animation)
     (define-key map [?D] #'picpocket-toggle-debug)
     map))
 
@@ -750,6 +769,7 @@ This mode is not used directly.  Other modes inherit from this mode.
                       " [n - thumbnails]"
                       " [s - filter by substring]"
                       " [k - keep moved]"
+                      " [a - animate]"
                       " [D - debug]"))))
     (set-keymap-parent map picpocket-base-toggle-map)
     (define-key map [?f] #'picpocket-toggle-fullscreen-frame)
@@ -1164,6 +1184,14 @@ ASK-FOR-DIR non-nil will also do that."
                                                     "Keep"
                                                   "Do not keep")))
 
+
+(defun picpocket-toggle-animation ()
+  "Toggle whether to animate pictures."
+  (interactive)
+  (setq picpocket-animate (not picpocket-animate))
+  (message "%s" (if picpocket-animate "Move about" "Be still"))
+  (picpocket-update-buffers))
+
 (defun picpocket-toggle-thumbnails ()
   "Toggle thumbnails in list buffers.
 
@@ -1188,7 +1216,7 @@ able to quickly move to the definition and edit keystrokes."
     (user-error (concat "You need to set picpocket-keystroke-alist "
                         "to a symbol for this command to work")))
   (find-variable-other-window picpocket-keystroke-alist)
-  (goto-char (point-at-eol)))
+  (goto-char (picpocket-pos-eol)))
 
 (defun picpocket-slide-show ()
   "Start slide-show."
@@ -2611,10 +2639,10 @@ the database for the given SHA."
   `(let* ((plist (picpocket-db-get ,sha))
           ,(if (memq 'files var-list)
                '(files (plist-get plist :files))
-             'ignored)
+             '_)
           ,(if (memq 'tags var-list)
                '(tags (plist-get plist :tags))
-             'ignored))
+             '_))
      ,@body))
 
 (defun picpocket-db-tags (sha)
@@ -2930,19 +2958,21 @@ Enables thumbnails pictures.  Thumbnails can also be toggled with
     (if (and picpocket-list-thumbnails
              (display-images-p)
              (file-exists-p file))
-        (let ((max-width (* 2 (picpocket-thumbnail-pixels))))
-          (concat (propertize " "
-                              'display
-                              (picpocket-create-thumbnail
-                               file
-                               ;; PENDING - For some reason the
-                               ;; thumbnails do not show in the undo
-                               ;; buffer in Emacs 26 and earlier if
-                               ;; :margin and :max-width are given.
-                               ;; It does not seem to be a problem
-                               ;; here in list mode.
-                               :margin picpocket-thumbnail-margin
-                               :max-width max-width))
+        (let* ((max-width (* 2 (picpocket-thumbnail-pixels)))
+               (image (picpocket-create-thumbnail
+                       file
+                       ;; PENDING - For some reason the
+                       ;; thumbnails do not show in the undo
+                       ;; buffer in Emacs 26 and earlier if
+                       ;; :margin and :max-width are given.
+                       ;; It does not seem to be a problem
+                       ;; here in list mode.
+                       :margin picpocket-thumbnail-margin
+                       :max-width max-width)))
+          (and picpocket-animate
+               (image-multi-frame-p image)
+               (image-animate image nil t))
+          (concat (propertize " " 'display image)
                   (propertize " "
                               'display
                               (cons 'space (list :align-to 27)))))
@@ -3112,6 +3142,7 @@ Enables thumbnails pictures.  Thumbnails can also be toggled with
                          (cl-loop for pic on picpocket-list-pic-list
                                   when (memq tag (picpocket-tags pic))
                                   collect (picpocket-absfile pic))
+                       (picpocket-do-set-filter nil)
                        (let (files)
                          (picpocket-db-mapc
                           (lambda (_sha plist)
@@ -3427,7 +3458,7 @@ will end up replacing the deleted text."
                     (picpocket-db-remove sha))))))
 
 (defun picpocket-remove-file-names-in-db (missing-files)
-  (cl-loop for (file ignored sha) in missing-files
+  (cl-loop for (file _ sha) in missing-files
            do (picpocket-with-db sha (plist files)
                 (let ((new-files (delete file files)))
                   (if new-files
@@ -3669,7 +3700,7 @@ any Emacs.  Otherwise your edits may become overwritten.")
             (let* ((standard-input (current-buffer))
                    (version (cadr (read)))
                    (format (cadr (read)))
-                   (ignored (cadr (read))))
+                   (_ (cadr (read))))
               (unless (equal version picpocket-db-version)
                 (error "Unknown picpocket database version %s in %s"
                        version db-file))
@@ -3693,7 +3724,7 @@ any Emacs.  Otherwise your edits may become overwritten.")
   (picpocket-db-read-and-hash-list (picpocket-db-new-hash-table)))
 
 (defun picpocket-db-read-and-hash-list (hash-table &optional counter)
-  (condition-case ignored
+  (condition-case _
       (while t
         (cl-destructuring-bind (key value) (read)
           (if value
@@ -4076,19 +4107,19 @@ any Emacs.  Otherwise your edits may become overwritten.")
 
 
 
-(defun picpocket-update-current-bytes (&rest ignored)
+(defun picpocket-update-current-bytes (&rest _)
   (let ((bytes (picpocket-bytes)))
     (picpocket-bytes-force picpocket-current)
     (unless bytes
       (force-mode-line-update)))
   nil)
 
-(defun picpocket-maybe-save-journal (&rest ignored)
+(defun picpocket-maybe-save-journal (&rest _)
   (when (> (picpocket-db-journal-size) 100)
     (picpocket-db-save))
   nil)
 
-(defun picpocket-save-journal (&rest ignored)
+(defun picpocket-save-journal (&rest _)
   (unless (zerop (picpocket-db-journal-size))
     (picpocket-db-save))
   nil)
@@ -4096,7 +4127,7 @@ any Emacs.  Otherwise your edits may become overwritten.")
 ;; This is skipped when there is a filter.  With a filter this
 ;; operation could potentially take a very long time.  And it
 ;; currently do not care about any deadlines.
-(defun picpocket-look-ahead-next (&rest ignored)
+(defun picpocket-look-ahead-next (&rest _)
   (unless picpocket-filter
     (let ((pic (or (picpocket-next-pic) (picpocket-previous-pic))))
       (when (and pic
@@ -4106,7 +4137,7 @@ any Emacs.  Otherwise your edits may become overwritten.")
   nil)
 
 
-(defun picpocket-look-ahead-more (deadline-function ignored)
+(defun picpocket-look-ahead-more (deadline-function _)
   (let ((s (cadr (picpocket-time (picpocket-look-ahead-more2
                                   deadline-function)))))
     (picpocket-debug s "more")))
@@ -4163,7 +4194,11 @@ any Emacs.  Otherwise your edits may become overwritten.")
 
 (defun picpocket-insert-image (image)
   (if (display-images-p)
-      (insert-image image)
+      (progn
+        (insert-image image)
+        (and picpocket-animate
+             (image-multi-frame-p image)
+             (image-animate image nil t)))
     (insert "\n\n[This display does not support images]"))
   (goto-char (point-min)))
 
@@ -4552,7 +4587,7 @@ necessarily run with the picpocket window selected."
              (key-description key))))
 
 (defun picpocket-lookup-key (x)
-  (cl-loop for (key ignored arg) in (picpocket-keystroke-alist-nodups)
+  (cl-loop for (key _ arg) in (picpocket-keystroke-alist-nodups)
            when (equal (picpocket-key-vector x)
                        (picpocket-key-vector key))
            return arg))
@@ -4769,7 +4804,7 @@ Third invocation will hide the help buffer."
   (save-excursion
     (goto-char (point-min))
     (cl-loop until (eobp)
-             maximize (- (point-at-eol) (point-at-bol))
+             maximize (- (picpocket-pos-eol) (picpocket-pos-bol))
              do (forward-line 1))))
 
 
@@ -4834,7 +4869,7 @@ Third invocation will hide the help buffer."
       (princ (format "-               add tag instead of remove\n")))
     (when (string-equal what "tag to add")
       (princ (format "-               remove tag instead of add\n")))
-    (cl-loop for (key ignored arg) in (picpocket-keystroke-alist-nodups)
+    (cl-loop for (key _ arg) in (picpocket-keystroke-alist-nodups)
              do (princ (format "%-16s%s\n"
                                (key-description (picpocket-key-vector key))
                                arg)))))
@@ -5574,10 +5609,16 @@ This command picks the first undoable command in that list."
     (picpocket-insert-thumbnail (picpocket-op-image-file undoable op))))
 
 (defun picpocket-insert-thumbnail (file)
-  (and (display-images-p)
-       file
-       (file-exists-p file)
-       (insert-image (picpocket-create-thumbnail file))))
+  (when (and (display-images-p)
+             file
+             (file-exists-p file))
+    (let ((image (picpocket-create-thumbnail file)))
+      (insert-image image)
+      (and picpocket-animate
+           (image-multi-frame-p image)
+           (image-animate image nil t)))))
+
+
 
 ;; PENDING - could provide :thumbnail-file to picpocket-stash-undo-op instead.
 (defun picpocket-op-image-file (undoable op)
@@ -5648,7 +5689,7 @@ This command picks the first undoable command in that list."
        (eq (picpocket-undoable-state (ewoc-data current))
            'undone)))
 
-(defun picpocket-true (&rest ignored)
+(defun picpocket-true (&rest _)
   t)
 
 (defun picpocket-undo-legend-pp (legend)

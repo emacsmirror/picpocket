@@ -3,7 +3,7 @@
 ;; Copyright (C) 2017 Johan Claesson
 ;; Author: Johan Claesson <johanwclaesson@gmail.com>
 ;; URL: https://github.com/johanclaesson/picpocket
-;; Version: 43
+;; Version: 44
 ;; Keywords: multimedia
 ;; Package-Requires: ((emacs "24.4"))
 
@@ -188,7 +188,7 @@ warm/red.svg"
       (picpocket-clock (picpocket-directory "~/bilder/japan/dvd/"))
       (with-current-buffer picpocket-buffer
         ;; (picpocket-toggle-fullscreen-frame)
-        (dotimes (ignored 30)
+        (dotimes (_ 30)
           (picpocket-clock (picpocket-look-ahead-next))
           (picpocket-clock (redisplay))
           (picpocket-clock (picpocket-next)))))))
@@ -659,9 +659,9 @@ warm/red.svg"
   (declare (debug (body))
            (indent defun))
   `(cl-loop for picpocket-db-format in picpocket-db-valid-formats
-            collect (picpocket-with-test-dir
-                      (picpocket-db-put-test-data)
-                      ,@body)))
+            do (picpocket-with-test-dir
+                 (picpocket-db-put-test-data)
+                 ,@body)))
 
 (ert-deftest picpocket-db-put-get-test ()
   (picpocket-with-test-db
@@ -823,7 +823,7 @@ warm/red.svg"
     (let ((reds (picpocket-pos-list-by-file "red.svg")))
       (should (eq 2 (length reds)))
       (cl-letf (((symbol-function 'completing-read)
-                 (lambda (_prompt coll &rest ignored) (cadr coll))))
+                 (lambda (_prompt coll &rest _) (cadr coll))))
         (let ((pic (picpocket-select-pos-by-dir reds "Choose wisely: ")))
           (should (eq 3 (picpocket-calculate-index pic))))))))
 
